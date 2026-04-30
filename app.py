@@ -16,6 +16,10 @@ DATABASE_PATH = os.environ.get('DATABASE_PATH', 'licenses.db')
 stripe.api_key = STRIPE_SECRET_KEY
 resend.api_key = RESEND_API_KEY
 
+
+# -----------------------------
+# DATABASE
+# -----------------------------
 def init_db():
     conn = sqlite3.connect(DATABASE_PATH)
     c = conn.cursor()
@@ -29,6 +33,7 @@ def init_db():
     conn.commit()
     conn.close()
 
+
 def save_license_key(license_key, customer_email, stripe_session_id):
     conn = sqlite3.connect(DATABASE_PATH)
     c = conn.cursor()
@@ -37,12 +42,20 @@ def save_license_key(license_key, customer_email, stripe_session_id):
     conn.commit()
     conn.close()
 
+
+# -----------------------------
+# LICENSE GENERATION
+# -----------------------------
 def generate_license_key():
     part1 = secrets.token_hex(2).upper()
     part2 = secrets.token_hex(2).upper()
     part3 = secrets.token_hex(2).upper()
     return f"LKEY-{part1}-{part2}-{part3}"
 
+
+# -----------------------------
+# EMAIL SENDER
+# -----------------------------
 def send_license_email(to_email, license_key):
     html_content = f'''
     <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto;">
@@ -63,7 +76,7 @@ def send_license_email(to_email, license_key):
     </div>
     '''
     try:
-        email = resend.Emails.send({
+        resend.Emails.send({
             "from": FROM_EMAIL,
             "to": [to_email],
             "subject": "Your Lymphie Sanctuary License Key 🌿",
@@ -75,10 +88,15 @@ def send_license_email(to_email, license_key):
         print(f"Error sending email: {e}")
         return False
 
+
+# -----------------------------
+# STRIPE WEBHOOK
+# -----------------------------
 @app.route('/webhook', methods=['POST'])
 def stripe_webhook():
     payload = request.data
     sig_header = request.headers.get('Stripe-Signature')
+
     try:
         event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
     except ValueError:
@@ -89,20 +107,24 @@ def stripe_webhook():
     if event['type'] == 'checkout.session.completed':
         session = event['data']['object']
 
-        # Safe access – works with both dicts and StripeObject
-        customer_email = None
-        customer_details = session.get('customer_details') if isinstance(session, dict) else getattr(session, 'customer_details', None)
+        # Convert StripeObject → dict safely
+        session_dict = session.to_dict() if isinstance(session, stripe.StripeObject) else session
 
-        if customer_details:
-            if isinstance(customer_details, stripe.StripeObject):
-                customer_details = dict(customer_details)
-            customer_email = customer_details.get('email')
+        # Extract email safely
+        customer_email = None
+
+        customer_details = session_dict.get("customer_details")
+        if isinstance(customer_details, stripe.StripeObject):
+            customer_details = customer_details.to_dict()
+
+        if customer_details and "email" in customer_details:
+            customer_email = customer_details["email"]
 
         # fallback
         if not customer_email:
-            customer_email = getattr(session, 'customer_email', None)
+            customer_email = session_dict.get("customer_email")
 
-        stripe_session_id = session['id'] if isinstance(session, dict) else session.id
+        stripe_session_id = session_dict.get("id")
 
         if customer_email:
             license_key = generate_license_key()
@@ -115,6 +137,10 @@ def stripe_webhook():
 
     return jsonify({'status': 'success'}), 200
 
+
+# -----------------------------
+# LICENSE VALIDATION
+# -----------------------------
 @app.route('/validate', methods=['POST'])
 def validate_key():
     data = request.json
@@ -126,10 +152,18 @@ def validate_key():
     conn.close()
     return jsonify({'valid': bool(result)}), 200
 
+
+# -----------------------------
+# HEALTH CHECK
+# -----------------------------
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({'status': 'healthy'}), 200
 
+
+# -----------------------------
+# MAIN
+# -----------------------------
 if __name__ == '__main__':
     init_db()
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
