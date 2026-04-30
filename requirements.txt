@@ -1,4 +1,4 @@
 ﻿Flask==2.3.3
-stripe==7.8.0
-resend==0.8.0
+stripe>=9.0.0
+resend>=1.0.0
 gunicorn==21.2.0
