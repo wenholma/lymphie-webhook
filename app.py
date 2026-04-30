@@ -1,4 +1,4 @@
-﻿import os
+import os
 import sqlite3
 import secrets
 from flask import Flask, request, jsonify
@@ -63,8 +63,12 @@ def send_license_email(to_email, license_key):
     </div>
     '''
     try:
-        params = {"from": FROM_EMAIL, "to": [to_email], "subject": "Your Lymphie Sanctuary License Key 🌿", "html": html_content}
-        email = resend.Emails.send(params)
+        email = resend.Emails.send({
+            "from": FROM_EMAIL,
+            "to": [to_email],
+            "subject": "Your Lymphie Sanctuary License Key 🌿",
+            "html": html_content
+        })
         print(f"Email sent to {to_email}")
         return True
     except Exception as e:
@@ -75,21 +79,38 @@ def send_license_email(to_email, license_key):
 def stripe_webhook():
     payload = request.data
     sig_header = request.headers.get('Stripe-Signature')
+    
     try:
         event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
     except ValueError:
         return jsonify({'error': 'Invalid payload'}), 400
     except stripe.error.SignatureVerificationError:
         return jsonify({'error': 'Invalid signature'}), 400
+    
     if event['type'] == 'checkout.session.completed':
         session = event['data']['object']
-        customer_email = session.get('customer_details', {}).get('email') or session.get('customer_email')
+        
+        # FIXED: New Stripe library format — use dict access for nested objects
+        customer_details = session.get('customer_details', None)
+        customer_email = None
+        
+        if customer_details and isinstance(customer_details, dict):
+            customer_email = customer_details.get('email')
+        
+        if not customer_email:
+            customer_email = session.get('customer_email')
+        
         stripe_session_id = session['id']
-        license_key = generate_license_key()
-        init_db()
-        save_license_key(license_key, customer_email, stripe_session_id)
-        send_license_email(customer_email, license_key)
-        print(f"License {license_key} sent to {customer_email}")
+        
+        if customer_email:
+            license_key = generate_license_key()
+            init_db()
+            save_license_key(license_key, customer_email, stripe_session_id)
+            send_license_email(customer_email, license_key)
+            print(f"✅ License {license_key} sent to {customer_email}")
+        else:
+            print(f"⚠️ No email found for session {stripe_session_id}")
+    
     return jsonify({'status': 'success'}), 200
 
 @app.route('/validate', methods=['POST'])
