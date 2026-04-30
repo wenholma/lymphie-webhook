@@ -79,29 +79,31 @@ def send_license_email(to_email, license_key):
 def stripe_webhook():
     payload = request.data
     sig_header = request.headers.get('Stripe-Signature')
-    
     try:
         event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
     except ValueError:
         return jsonify({'error': 'Invalid payload'}), 400
     except stripe.error.SignatureVerificationError:
         return jsonify({'error': 'Invalid signature'}), 400
-    
+
     if event['type'] == 'checkout.session.completed':
         session = event['data']['object']
-        
-        # FIXED: New Stripe library format — use dict access for nested objects
-        customer_details = session.get('customer_details', None)
+
+        # Safe access – works with both dicts and StripeObject
         customer_email = None
-        
-        if customer_details and isinstance(customer_details, dict):
+        customer_details = session.get('customer_details') if isinstance(session, dict) else getattr(session, 'customer_details', None)
+
+        if customer_details:
+            if isinstance(customer_details, stripe.StripeObject):
+                customer_details = dict(customer_details)
             customer_email = customer_details.get('email')
-        
+
+        # fallback
         if not customer_email:
-            customer_email = session.get('customer_email')
-        
-        stripe_session_id = session['id']
-        
+            customer_email = getattr(session, 'customer_email', None)
+
+        stripe_session_id = session['id'] if isinstance(session, dict) else session.id
+
         if customer_email:
             license_key = generate_license_key()
             init_db()
@@ -110,7 +112,7 @@ def stripe_webhook():
             print(f"✅ License {license_key} sent to {customer_email}")
         else:
             print(f"⚠️ No email found for session {stripe_session_id}")
-    
+
     return jsonify({'status': 'success'}), 200
 
 @app.route('/validate', methods=['POST'])
