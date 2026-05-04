@@ -1,6 +1,8 @@
 import os
 import sqlite3
 import secrets
+import json
+from datetime import datetime
 from flask import Flask, request, jsonify
 import stripe
 import resend
@@ -16,10 +18,6 @@ DATABASE_PATH = os.environ.get('DATABASE_PATH', 'licenses.db')
 stripe.api_key = STRIPE_SECRET_KEY
 resend.api_key = RESEND_API_KEY
 
-
-# -----------------------------
-# DATABASE
-# -----------------------------
 def init_db():
     conn = sqlite3.connect(DATABASE_PATH)
     c = conn.cursor()
@@ -33,7 +31,6 @@ def init_db():
     conn.commit()
     conn.close()
 
-
 def save_license_key(license_key, customer_email, stripe_session_id):
     conn = sqlite3.connect(DATABASE_PATH)
     c = conn.cursor()
@@ -42,20 +39,12 @@ def save_license_key(license_key, customer_email, stripe_session_id):
     conn.commit()
     conn.close()
 
-
-# -----------------------------
-# LICENSE GENERATION
-# -----------------------------
 def generate_license_key():
     part1 = secrets.token_hex(2).upper()
     part2 = secrets.token_hex(2).upper()
     part3 = secrets.token_hex(2).upper()
     return f"LKEY-{part1}-{part2}-{part3}"
 
-
-# -----------------------------
-# EMAIL SENDER
-# -----------------------------
 def send_license_email(to_email, license_key):
     html_content = f'''
     <div style="font-family: Arial, sans-serif; max-width: 500px; margin: 0 auto;">
@@ -88,10 +77,6 @@ def send_license_email(to_email, license_key):
         print(f"Error sending email: {e}")
         return False
 
-
-# -----------------------------
-# STRIPE WEBHOOK
-# -----------------------------
 @app.route('/webhook', methods=['POST'])
 def stripe_webhook():
     payload = request.data
@@ -112,8 +97,8 @@ def stripe_webhook():
 
         # Extract email safely
         customer_email = None
-
         customer_details = session_dict.get("customer_details")
+
         if isinstance(customer_details, stripe.StripeObject):
             customer_details = customer_details.to_dict()
 
@@ -137,10 +122,6 @@ def stripe_webhook():
 
     return jsonify({'status': 'success'}), 200
 
-
-# -----------------------------
-# LICENSE VALIDATION
-# -----------------------------
 @app.route('/validate', methods=['POST'])
 def validate_key():
     data = request.json
@@ -152,18 +133,10 @@ def validate_key():
     conn.close()
     return jsonify({'valid': bool(result)}), 200
 
-
-# -----------------------------
-# HEALTH CHECK
-# -----------------------------
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({'status': 'healthy'}), 200
 
-
-# -----------------------------
-# MAIN
-# -----------------------------
 if __name__ == '__main__':
     init_db()
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
